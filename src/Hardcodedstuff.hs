@@ -14,14 +14,14 @@ import Network.HTTP.Types.Header (Header)
 
 
 logFilePath :: FilePath
-logFilePath = "$HOME/monitorlog.ascii"
+logFilePath = "monitorlog.ascii"
 
 dbTestnet :: ConnectInfo
 dbTestnet = ConnectInfo { connectHost="127.0.0.1"
                         , connectPort=5432
                         , connectUser="wsmithston"
                         , connectPassword=""
-                        , connectDatabase="dashblockkchain"
+                        , connectDatabase="dashblockchain"
                         }
 
 connection :: IO Connection
