@@ -20,7 +20,7 @@ import System.Console.GetOpt
                               ( getOpt
                               , usageInfo
                               , OptDescr (Option)
-                              , ArgDescr (NoArg, ReqArg)
+                              , ArgDescr (NoArg, ReqArg, OptArg)
                               , ArgOrder (Permute, RequireOrder)
                               )
 
@@ -61,14 +61,54 @@ import Hardcodedstuff
 
 import Types
 
+import Data.Maybe ( fromMaybe )
+
+data Options = Options
+ { optVerbose     :: Bool
+ , optShowVersion :: Bool
+ , optOutput      :: Maybe FilePath
+ , optInput       :: Maybe FilePath
+ , optLibDirs     :: [FilePath]
+ } deriving Show
+
+defaultOptions    = Options
+ { optVerbose     = False
+ , optShowVersion = False
+ , optOutput      = Nothing
+ , optInput       = Nothing
+ , optLibDirs     = []
+ }
+
+options :: [OptDescr (Options -> Options)]
+options =
+ [ Option ['v']     ["verbose"]
+     (NoArg (\ opts -> opts { optVerbose = True }))
+     "chatty output on stderr"
+ , Option ['V','?'] ["version"]
+     (NoArg (\ opts -> opts { optShowVersion = True }))
+     "show version number"
+ , Option ['o']     ["output"]
+     (OptArg ((\ f opts -> opts { optOutput = Just f }) . fromMaybe "output")
+             "FILE")
+     "output FILE"
+ , Option ['L']     ["libdir"]
+     (ReqArg (\ d opts -> opts { optLibDirs = optLibDirs opts ++ [d] }) "DIR")
+     "library directory"
+ ]
+
+
 -----------------   Main Input/Output   ---------------------
 main :: IO ()
-main =  getArgs >>= logStart >> mainloop >> logEnd
+main =  getArgs >>= \args ->
+        case getOpt Permute options args of
+             (o, n, [])   -> mainloop o n
+             (_, _, errs) -> forM_ (errs ++ [usageInfo header options]) putStrLn
+        where header = "Usage: dashflow [OPTION...]"
 
-mainloop :: IO ()
-mainloop = connection >>= \c ->
-           initDB c >>
-           forever (threadDelay 2000000 >> syncDB)
+mainloop :: [(Options -> Options)] -> [String] ->IO ()
+mainloop o n = connection >>= \c ->
+               initDB c >>
+               forever (threadDelay 2000000 >> syncDB)
                      -- in microseconds
 
 --------------------    Database    ------------------------------
@@ -93,7 +133,7 @@ syncDB =  do coreHeight <- readInt <$> getblockcount --Catch exc if client off!
              --dbHeight <-
              print $ "Core Height: "++ show coreHeight
              --print $ "DB Height:   "++ show coreHeight
-             mapM_ pushBlocks (chunks 200 [1..coreHeight])
+             mapM_ pushBlocks (chunks 1 [270000..coreHeight])
              -- updateDB -- Or: until (isUpToDate) updateDB
 
 readInt :: String -> Int
