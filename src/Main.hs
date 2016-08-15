@@ -12,6 +12,10 @@ import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.UnixTime          (getUnixTime, toClockTime, utSeconds)
 import Data.Aeson             (decode)
 import Data.ByteString.Lazy.Char8 (pack)
+import Data.Configurator      (load, lookup, require, display,
+                               Worth (Required)
+                              )
+import Data.Configurator.Types (Config)
 
 import System.Process         (proc,CreateProcess, readCreateProcessWithExitCode)
 import System.Exit (ExitCode  (ExitSuccess, ExitFailure))
@@ -33,10 +37,12 @@ import Database.PostgreSQL.Simple
                                   , Query
                                   , connect
                                   , Connection
+                                  , ConnectInfo (..)
                                   , SqlError
                                   , sqlErrorMsg
                                   , Only
                                   )
+
 
 import PostDB
                              ( tables
@@ -54,14 +60,10 @@ import PostDB
                              )
 
 
-import Hardcodedstuff
-                             ( logFilePath
-                             , connection
-                             )
-
 import Types
 
 import Data.Maybe ( fromMaybe )
+import Data.Word (Word16)
 
 data Options = Options
  { optVerbose     :: Bool
@@ -69,6 +71,7 @@ data Options = Options
  , optOutput      :: Maybe FilePath
  , optInput       :: Maybe FilePath
  , optLibDirs     :: [FilePath]
+ , optConfigFile  :: FilePath
  } deriving Show
 
 defaultOptions    = Options
@@ -77,6 +80,7 @@ defaultOptions    = Options
  , optOutput      = Nothing
  , optInput       = Nothing
  , optLibDirs     = []
+ , optConfigFile  = "dashflow.cfg"
  }
 
 options :: [OptDescr (Options -> Options)]
@@ -88,30 +92,59 @@ options =
      (NoArg (\ opts -> opts { optShowVersion = True }))
      "show version number"
  , Option ['o']     ["output"]
-     (OptArg ((\ f opts -> opts { optOutput = Just f }) . fromMaybe "output")
+     (OptArg ((\f opts -> opts { optOutput = Just f }) . fromMaybe "output")
              "FILE")
      "output FILE"
- , Option ['L']     ["libdir"]
-     (ReqArg (\ d opts -> opts { optLibDirs = optLibDirs opts ++ [d] }) "DIR")
-     "library directory"
+ , Option ['c']     ["config"]
+     (ReqArg (\c opts -> opts { optConfigFile = c }) "FILE")
+     "configuration file"
  ]
 
 
+getOptions :: [String] -> IO (Options, [String])
+getOptions argv =
+   case getOpt Permute options argv of
+      (o,n,[]  ) -> return (foldl (flip id) defaultOptions o, n)
+      (_,_,errs) -> ioError (userError (concat errs ++ usageInfo header options))
+  where header = "Usage: dashflow [OPTION...]"
+
 -----------------   Main Input/Output   ---------------------
 main :: IO ()
-main =  getArgs >>= \args ->
-        case getOpt Permute options args of
-             (o, n, [])   -> mainloop o n
-             (_, _, errs) -> forM_ (errs ++ [usageInfo header options]) putStrLn
-        where header = "Usage: dashflow [OPTION...]"
+main = do args <- getArgs
+          print args
+          (opts, nonopts) <- getOptions args
+          cfg  <- getConfig (optConfigFile opts)
+          display cfg
+          mainloop opts cfg
 
-mainloop :: [(Options -> Options)] -> [String] ->IO ()
-mainloop o n = connection >>= \c ->
-               initDB c >>
-               forever (threadDelay 2000000 >> syncDB)
-                     -- in microseconds
+mainloop :: Options -> Config ->IO ()
+mainloop opts cfg = do conn <- connection cfg
+                       initDB conn
+                       forever (threadDelay 2000000 >> syncDB cfg)
+                       -- in microseconds
+
+getConfig :: FilePath -> IO Config
+getConfig fp = load [ Required fp ]
 
 --------------------    Database    ------------------------------
+connection :: Config -> IO Connection
+connection cfg = do host     <- require cfg "db.host" :: IO String
+                    port     <- require cfg "db.port" :: IO Word16
+                    user     <- require cfg "db.username" :: IO String
+                    password <- require cfg "db.password" :: IO String
+                    database <- require cfg "db.dbname" :: IO String
+
+                    let dbInfo = ConnectInfo { connectHost     = host
+                                             , connectPort     = port
+                                             , connectUser     = user
+                                             , connectPassword = password
+                                             , connectDatabase = database
+                                             }
+
+                    connect dbInfo
+
+
+
 -- Initialize if new
 initDB :: Connection -> IO ()
 initDB c =  dropEm c >> createTables c tables
@@ -128,13 +161,13 @@ handleSqlError :: SqlError -> IO ()
 handleSqlError e = putStrLn ("Caught SqlError: "++show (sqlErrorMsg e))
 
 -- Synchronize if not up to date
-syncDB :: IO ()
-syncDB =  do coreHeight <- readInt <$> getblockcount --Catch exc if client off!
-             --dbHeight <-
-             print $ "Core Height: "++ show coreHeight
-             --print $ "DB Height:   "++ show coreHeight
-             mapM_ pushBlocks (chunks 1 [270000..coreHeight])
-             -- updateDB -- Or: until (isUpToDate) updateDB
+syncDB :: Config -> IO ()
+syncDB cfg =  do coreHeight <- readInt <$> getblockcount --Catch exc if client off!
+                 --dbHeight <-
+                 print $ "Core Height: "++ show coreHeight
+                 --print $ "DB Height:   "++ show coreHeight
+                 mapM_ (pushBlocks cfg) (chunks 1 [270000..coreHeight])
+                 -- updateDB -- Or: until (isUpToDate) updateDB
 
 readInt :: String -> Int
 readInt = read
@@ -146,11 +179,11 @@ chunks s xs =  foo : chunks s bar
              where foo = fst (splitAt s xs)
                    bar = snd (splitAt s xs)
 
-pushBlocks :: [Int] -> IO ()
-pushBlocks xs = do c <- connection
-                   (blocks, txs) <- getBlockchain xs
-                   (dbPushBlocks c) blocks
-                   (dbPushTxs c) txs
+pushBlocks :: Config -> [Int] -> IO ()
+pushBlocks cfg xs = do conn <- connection cfg
+                       (blocks, txs) <- getBlockchain xs
+                       (dbPushBlocks conn) blocks
+                       (dbPushTxs conn) txs
 
 getBlockchain :: [Int] -> IO ([Maybe Block], [Maybe [Tx]])
 getBlockchain xs = do blocks <- mapM retrieveBlock xs  --[Maybe Block]
@@ -184,7 +217,7 @@ dbPushTxs conn mtxss = case sequence mtxss of
 
 dbStoreTx :: Connection -> [Tx] -> IO ()
 dbStoreTx conn txs = do
-    txid <- dbGetCurrentTxId
+    txid <- dbGetCurrentTxId conn
     x <- executeMany conn insertTx txs
     let txouts = zipWith attachTxId [txid+1..] (map txVout txs) -- [[(Int, Output)]]
     y <- executeMany conn insertTxOut (map toRowTxOut $ concat txouts)
@@ -206,16 +239,15 @@ pubkeyid :: Output -> Int
 pubkeyid o = 1234
 
 
-dbGetCurrentTxId :: IO (Int)
-dbGetCurrentTxId = do c <- connection
-                      xs <- query_ c qryCurrentTxId :: IO [TxId]
-                      print xs
-                      case xs of
-                          []  -> return 0
-                          [a] -> return (getTxId $ head xs)
+dbGetCurrentTxId :: Connection -> IO (Int)
+dbGetCurrentTxId conn = do xs   <- query_ conn qryCurrentTxId :: IO [TxId]
+                           print xs
+                           case xs of
+                               []  -> return 0
+                               [a] -> return (getTxId $ head xs)
 
-                      --return (getTxId $ head xs)
-                      --forM_ xs $ \id -> putStrLn (show (id :: Int))
+                           --return (getTxId $ head xs)
+                           --forM_ xs $ \id -> putStrLn (show (id :: Int))
 
 getTxId :: TxId -> Int
 getTxId (TxId id _) = id
@@ -294,18 +326,19 @@ getrawmempooltrue ::IO (String)
 getrawmempooltrue = callClient $ cli ["getrawmempool", "true"]
 
 ------------------    Logging Facilities    -----------------------
-logStart :: [String] -> IO ()
-logStart args = mapM_ writeToLog [ "Initializing System..."
-                                 , "Arguments received:  "
-                                 , (unwords args)
-                                 ]
-
-logEnd :: IO ()
-logEnd = writeToLog "Shutting Down"
-
-writeToLog :: String -> IO ()
-writeToLog entry = do time <- getTime
-                      appendFile logFilePath (time++": "++entry++"\n")
+--logStart :: [String] -> IO ()
+--logStart args = mapM_ writeToLog [ "Initializing System..."
+--                                 , "Arguments received:  "
+--                                 , (unwords args)
+--                                 ]
+--
+--logEnd :: IO ()
+--logEnd = writeToLog "Shutting Down"
+--
+--writeToLog :: String -> IO ()
+--writeToLog entry = do time <- getTime
+--                      logFilePath <- require cfg "log.filepath" :: IO String
+--                      appendFile logFilePath (time++": "++entry++"\n")
 
 getTime :: IO String
 getTime = liftM (show . toClockTime) getUnixTime
