@@ -60,7 +60,7 @@ import PostDB
 
 import Types
 
-import Data.Maybe ( fromMaybe )
+import Data.Maybe ( fromMaybe, isJust )
 import Data.Word (Word16)
 
 data Options = Options
@@ -199,6 +199,12 @@ pushBlocks cfg xs = do conn <- connection cfg
 getBlockchain :: [Int] -> IO ([Maybe Block], [Maybe [Tx]])
 getBlockchain xs = do blocks <- mapM retrieveBlock xs  --[Maybe Block]
                       -- if this has Nothing's then ....?
+                      when (not.and $ map isJust blocks) (putStrLn "Something is amiss")
+
+                      let lastblock = last blocks
+                      case lastblock of
+                          Just b -> putStrLn ("Block height:" ++ ((show . height) b))
+                          Nothing -> (print "Lastblock -> Nothing" >> exitWith (ExitFailure 1))
 
                       txs    <- mapM txsFromBlock blocks  --[Maybe [Tx]]
                       -- if this has Nothing's then ....?
@@ -218,16 +224,13 @@ retrieveTx :: String -> IO (Maybe Tx)
 retrieveTx = getrawtransaction >=> decoderawtransaction >=> (return . toTx)
 
 retrieveTxs :: [String] -> IO (Maybe [Tx])
-retrieveTxs xs =  bar (foo xs)
+retrieveTxs xs =  bar (map retrieveTx xs)
 
 toTx :: String -> Maybe Tx
 toTx s = decode (pack s) :: Maybe Tx
 
 toBlock :: String -> Maybe Block
 toBlock s = decode (pack s) :: Maybe Block
-
-foo :: [String] -> [IO (Maybe Tx)]
-foo xs = map retrieveTx xs
 
 bar :: [IO (Maybe Tx)] -> IO (Maybe [Tx])
 bar ios = sequence ios >>= return . (\mtxs -> sequence mtxs)
@@ -283,7 +286,7 @@ dbPushBlocks c ms = case sequence ms of
 -- | This is where you execute queries
 dbStoreBlocks :: Connection -> [Block] -> IO ()
 dbStoreBlocks c blocks = executeMany c insertBlock blocks >>= \x->
-                         print (show x ++ " blocks")
+                         print (show x ++ " blocks inserted.")
                         --executeMany c insertBlockNext blocks
 
 
