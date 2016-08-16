@@ -208,7 +208,7 @@ txsFromBlock mb = case mb of
 
 -------------- SIMPLIFY THIS ----------------------
 retrieveTx :: String -> IO (Maybe Tx)
-retrieveTx = getrawtransaction >=> decoderawtransaction >=> toTxIO
+retrieveTx = getrawtransaction >=> decoderawtransaction >=> (return . toTx)
 -- fails for genesis coinbase transaction,
 
 retrieveTxs :: [String] -> IO (Maybe [Tx])
@@ -277,21 +277,11 @@ dbStoreBlocks c blocks = executeMany c insertBlock blocks >>= \x->
 toTx :: String -> Maybe Tx
 toTx s = decode (pack s) :: Maybe Tx
 
-toTxIO :: String -> IO (Maybe Tx)
-toTxIO s = return (toTx s)
-
 toBlock :: String -> Maybe Block
 toBlock s = decode (pack s) :: Maybe Block
 
-toBlockIO :: String -> IO (Maybe Block)
-toBlockIO s = return (toBlock s)
-
 retrieveBlock :: Int -> IO (Maybe Block)
-retrieveBlock = getblockhash >=> getblock >=> toBlockIO
-
-retrieveBestBlock :: IO (Maybe Block)
-retrieveBestBlock = getbestblockhash >>= (getblock >=> toBlockIO)
-
+retrieveBlock = getblockhash >=> getblock >=> (return . toBlock)
 
 
 ----------------------   cli commands   --------------------------
