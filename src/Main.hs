@@ -1,8 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 
-               {-   DASH Masternodes Monitor   -}
-
 import Control.Concurrent     (forkIO, threadDelay)
 import Control.Exception      (catch)
 import Control.Monad.Loops    (iterateUntilM)
