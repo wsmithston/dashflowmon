@@ -4,7 +4,7 @@
 import Control.Concurrent     (forkIO, threadDelay)
 import Control.Exception      (catch)
 import Control.Monad.Loops    (iterateUntilM)
-import Control.Monad          ((>=>), liftM, forever, forM_)
+import Control.Monad          ((>=>), liftM, forever, forM_, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 
 import Data.UnixTime          (getUnixTime, toClockTime, utSeconds)
@@ -16,7 +16,7 @@ import Data.Configurator      (load, lookup, require, display,
 import Data.Configurator.Types (Config)
 
 import System.Process         (proc,CreateProcess, readCreateProcessWithExitCode)
-import System.Exit (ExitCode  (ExitSuccess, ExitFailure))
+import System.Exit            (ExitCode  (ExitSuccess, ExitFailure), exitWith)
 import System.Environment     (getArgs)
 import System.Console.GetOpt
                               ( getOpt
@@ -103,13 +103,14 @@ options =
      "start from block b"
  ]
 
+header :: String
+header = "Usage: dashflow [OPTION...]"
 
 getOptions :: [String] -> IO (Options, [String])
 getOptions argv =
    case getOpt Permute options argv of
       (o,n,[]  ) -> return (foldl (flip id) defaultOptions o, n)
       (_,_,errs) -> ioError (userError (concat errs ++ usageInfo header options))
-  where header = "Usage: dashflow [OPTION...]"
 
 getConfig :: FilePath -> IO Config
 getConfig fp = load [ Required fp ]
@@ -118,6 +119,9 @@ getConfig fp = load [ Required fp ]
 main :: IO ()
 main = do args <- getArgs
           print args
+          when ("-h" `elem` args) (putStrLn (usageInfo header options) >>
+                                   exitWith ExitSuccess)
+
           (opts, nonopts) <- getOptions args
           cfg  <- getConfig (optConfigFile opts)
           display cfg
@@ -126,7 +130,7 @@ main = do args <- getArgs
 mainloop :: Options -> Config ->IO ()
 mainloop opts cfg = do conn <- connection cfg
                        initDB conn
-                       forever (threadDelay 2000000 >> syncDB cfg)
+                       forever (threadDelay 2000000 >> syncDB opts cfg)
                        -- in microseconds
 
 
@@ -165,16 +169,16 @@ handleSqlError :: SqlError -> IO ()
 handleSqlError e = putStrLn ("Caught SqlError: "++show (sqlErrorMsg e))
 
 -- Synchronize if not up to date
-syncDB :: Config -> IO ()
-syncDB cfg =  do coreHeight <- readInt <$> getblockcount --Catch exc if client off!
-                 --dbHeight <-
-                 print $ "Core Height: "++ show coreHeight
-                 --print $ "DB Height:   "++ show coreHeight
+syncDB :: Options -> Config -> IO ()
+syncDB opts cfg =  do coreHeight <- readInt <$> getblockcount --Catch exc if client off!
+                      --dbHeight <-
+                      print $ "Core Height: "++ show coreHeight
+                      --print $ "DB Height:   "++ show coreHeight
 
-                 chunksize <- require cfg "monitor.chunksize" :: IO Int
-
-                 mapM_ (pushBlocks cfg) (chunks chunksize [270000..coreHeight])
-                 -- updateDB -- Or: until (isUpToDate) updateDB
+                      chunksize <- require cfg "monitor.chunksize" :: IO Int
+                      let blk = optBlockNr opts
+                      mapM_ (pushBlocks cfg) (chunks chunksize [blk..coreHeight])
+                      -- updateDB -- Or: until (isUpToDate) updateDB
 
 readInt :: String -> Int
 readInt = read
