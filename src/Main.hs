@@ -70,6 +70,7 @@ data Options = Options
  , optInput       :: Maybe FilePath
  , optLibDirs     :: [FilePath]
  , optConfigFile  :: FilePath
+ , optBlockNr     :: Int
  } deriving Show
 
 defaultOptions    = Options
@@ -79,6 +80,7 @@ defaultOptions    = Options
  , optInput       = Nothing
  , optLibDirs     = []
  , optConfigFile  = "dashflow.cfg"
+ , optBlockNr     = 1
  }
 
 options :: [OptDescr (Options -> Options)]
@@ -96,6 +98,9 @@ options =
  , Option ['c']     ["config"]
      (ReqArg (\c opts -> opts { optConfigFile = c }) "FILE")
      "configuration file"
+ , Option ['b']     ["block"]
+     (ReqArg (\x opts -> opts { optBlockNr = read x}) "BLOCKNR")
+     "start from block b"
  ]
 
 
@@ -105,6 +110,9 @@ getOptions argv =
       (o,n,[]  ) -> return (foldl (flip id) defaultOptions o, n)
       (_,_,errs) -> ioError (userError (concat errs ++ usageInfo header options))
   where header = "Usage: dashflow [OPTION...]"
+
+getConfig :: FilePath -> IO Config
+getConfig fp = load [ Required fp ]
 
 -----------------   Main Input/Output   ---------------------
 main :: IO ()
@@ -121,8 +129,6 @@ mainloop opts cfg = do conn <- connection cfg
                        forever (threadDelay 2000000 >> syncDB cfg)
                        -- in microseconds
 
-getConfig :: FilePath -> IO Config
-getConfig fp = load [ Required fp ]
 
 --------------------    Database    ------------------------------
 connection :: Config -> IO Connection
@@ -164,7 +170,10 @@ syncDB cfg =  do coreHeight <- readInt <$> getblockcount --Catch exc if client o
                  --dbHeight <-
                  print $ "Core Height: "++ show coreHeight
                  --print $ "DB Height:   "++ show coreHeight
-                 mapM_ (pushBlocks cfg) (chunks 1 [270000..coreHeight])
+
+                 chunksize <- require cfg "monitor.chunksize" :: IO Int
+
+                 mapM_ (pushBlocks cfg) (chunks chunksize [270000..coreHeight])
                  -- updateDB -- Or: until (isUpToDate) updateDB
 
 readInt :: String -> Int
