@@ -198,21 +198,33 @@ pushBlocks cfg xs = do conn <- connection cfg
 
 getBlockchain :: [Int] -> IO ([Maybe Block], [Maybe [Tx]])
 getBlockchain xs = do blocks <- mapM retrieveBlock xs  --[Maybe Block]
+                      -- if this has Nothing's then ....?
+
                       txs    <- mapM txsFromBlock blocks  --[Maybe [Tx]]
+                      -- if this has Nothing's then ....?
                       return (blocks, txs)
+
+
+retrieveBlock :: Int -> IO (Maybe Block)
+retrieveBlock = getblockhash >=> getblock >=> (return . toBlock)
 
 txsFromBlock :: Maybe Block -> IO (Maybe [Tx])
 txsFromBlock mb = case mb of
                        Just b  -> (retrieveTxs (txs b))
                        Nothing -> return (Nothing)
 
--------------- SIMPLIFY THIS ----------------------
+-- fails for genesis coinbase transaction
 retrieveTx :: String -> IO (Maybe Tx)
 retrieveTx = getrawtransaction >=> decoderawtransaction >=> (return . toTx)
--- fails for genesis coinbase transaction,
 
 retrieveTxs :: [String] -> IO (Maybe [Tx])
 retrieveTxs xs =  bar (foo xs)
+
+toTx :: String -> Maybe Tx
+toTx s = decode (pack s) :: Maybe Tx
+
+toBlock :: String -> Maybe Block
+toBlock s = decode (pack s) :: Maybe Block
 
 foo :: [String] -> [IO (Maybe Tx)]
 foo xs = map retrieveTx xs
@@ -274,14 +286,6 @@ dbStoreBlocks c blocks = executeMany c insertBlock blocks >>= \x->
                          print (show x ++ " blocks")
                         --executeMany c insertBlockNext blocks
 
-toTx :: String -> Maybe Tx
-toTx s = decode (pack s) :: Maybe Tx
-
-toBlock :: String -> Maybe Block
-toBlock s = decode (pack s) :: Maybe Block
-
-retrieveBlock :: Int -> IO (Maybe Block)
-retrieveBlock = getblockhash >=> getblock >=> (return . toBlock)
 
 
 ----------------------   cli commands   --------------------------
