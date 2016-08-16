@@ -68,7 +68,8 @@ executable dashflowmon
                        postgresql-simple,
                        http-types,
                        monad-loops,
-                       unix-time
+                       unix-time,
+                       json-rpc
 
   -- Directories containing source files.
   hs-source-dirs:      src
