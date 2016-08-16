@@ -220,11 +220,11 @@ txsFromBlock mb = case mb of
                        Nothing -> return (Nothing)
 
 -- fails for genesis coinbase transaction
-retrieveTx :: String -> IO (Maybe Tx)
-retrieveTx = getrawtransaction >=> decoderawtransaction >=> (return . toTx)
-
 retrieveTxs :: [String] -> IO (Maybe [Tx])
 retrieveTxs xs =  bar (map retrieveTx xs)
+
+retrieveTx :: String -> IO (Maybe Tx)
+retrieveTx = getrawtransaction >=> decoderawtransaction >=> (return . toTx)
 
 toTx :: String -> Maybe Tx
 toTx s = decode (pack s) :: Maybe Tx
